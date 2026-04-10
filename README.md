@@ -1,6 +1,8 @@
 # Agri_IoT
 /*
 this is a project to display image in 1.69 inch display for display a image screen
+
+////////////////////////////////////////
 pinouts
 Din = 23
 clk = 18
@@ -9,6 +11,19 @@ dc = 21
 rst = 4
 bl = 32
 motor incidcator = 5
+////////////////////////////////////////////
+
+///////////////////////////////////////////
+editable parameters
+field number
+humidity
+ph
+///////////////////////////////////////////
+
+ip parameters
+http://192.168.0.40/set?level=VALUE&pump=off|on
+water level
+pump state
 */
 
 
