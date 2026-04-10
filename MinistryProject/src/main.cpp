@@ -9,8 +9,8 @@ TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite sprite = TFT_eSprite(&tft);
 
 
-const char* ssid = "vc";//Agri_IoT
-const char* password = "vikram7417";//Agri@123
+const char* ssid = "Agri_IoT";//Agri_IoT
+const char* password = "Agri@123";//Agri@123
 WebServer server(80);
 
 // 🔥 Static IP settings
@@ -26,6 +26,8 @@ IPAddress subnet(255, 255, 255, 0); //(255, 255, 255, 0)
 #define WATER_COLOR HEX565(0x5BC0EB)// Light Blue (Water)
 #define MOIST_COLOR HEX565(0x019b03)// Dark Green (Soil Moisture)
 
+#define pumpPin 5
+
 
 float waterlevel = 0.0;
 float moisture = 0.0;
@@ -35,9 +37,14 @@ int field = 1;
 
 void updateValues();
 void handleData();
+void fieldupadete();
+bool pumpstate();
 
 void setup() {
   Serial.begin(115200);
+
+  pinMode(pumpPin, OUTPUT);
+  digitalWrite(pumpPin, LOW); // Ensure pump is off at startup
 
 
   tft.init();
@@ -59,8 +66,9 @@ void setup() {
   tft.pushImage(0, 0, IMG_W, IMG_H, fieldlevelonline);// Draw background UI once
 
   Serial.println("\nConnected!");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
+  Serial.print("IP Address: http://");
+  Serial.print(WiFi.localIP());
+  Serial.println("/set?level=VALUE&pump=on|off");
 
   server.on("/set", handleData);
   server.begin();
@@ -70,14 +78,15 @@ void setup() {
 void loop() {
   server.handleClient();
   updateValues();
+  fieldupadete();
 
-  tft.setTextColor(TFT_WHITE);
-  tft.setTextSize(1);
-  tft.setCursor(215, 15);
-  tft.print((String)field);
+  if(pumpstate()){
+    digitalWrite(pumpPin, HIGH);
+  }
+  else{
+    digitalWrite(pumpPin, LOW);
+  }
 
-  waterlevel += 0.8;
-  if (waterlevel > 80) waterlevel = 0.0;
 
   delay(1000);
 }
@@ -141,4 +150,27 @@ void handleData() {
   } else {
     server.send(400, "text/plain", "No value sent");
   }
+}
+
+bool pumpstate(){
+  if(server.hasArg("pump")){
+    String val = server.arg("pump");
+    if(val == "on"){
+      Serial.println("Pump ON");
+      server.send(200, "text/plain", "Pump turned ON");
+      return true;
+    }
+    else if(val == "off"){
+      Serial.println("Pump OFF");
+      server.send(200, "text/plain", "Pump turned OFF");
+      return false;
+    }
+  }
+}
+
+void fieldupadete(){
+  tft.setTextColor(TFT_WHITE);
+  tft.setTextSize(1);
+  tft.setCursor(215, 15);
+  tft.print((String)field);
 }
