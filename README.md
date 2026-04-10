@@ -1,5 +1,18 @@
 # Agri_IoT
+/*
 this is a project to display image in 1.69 inch display for display a image screen
+pinouts
+Din = 23
+clk = 18
+cs = 15
+dc = 21
+rst = 4
+bl = 32
+motor incidcator = 5
+*/
+
+
+
 #include <TFT_eSPI.h>
 #include <WiFi.h>
 #include <WebServer.h>
