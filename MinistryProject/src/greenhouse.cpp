@@ -2,8 +2,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 
-#include "fieldlevelonline.h"// #include "fieldlevel.h" contains the pixel data for the background image (240x280px)
-#include "fieldleveloffline.h"
+#include "greenonline.h"// #include "fieldlevel.h" contains the pixel data for the background image (240x280px)
+#include "greenoffline.h"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite sprite = TFT_eSprite(&tft);
@@ -12,6 +12,7 @@ TFT_eSprite sprite = TFT_eSprite(&tft);
 const char* ssid = "Agri_IoT";//Agri_IoT
 const char* password = "Agri@123";//Agri@123
 WebServer server(80);
+
 
 // 🔥 Static IP settings
 IPAddress local_IP(192, 168, 0, 20);   // choose free IP (192, 168, 0, ??)
@@ -26,24 +27,14 @@ IPAddress subnet(255, 255, 255, 0); //(255, 255, 255, 0)
 #define WATER_COLOR HEX565(0x5BC0EB)// Light Blue (Water)
 #define MOIST_COLOR HEX565(0x019b03)// Dark Green (Soil Moisture)
 
-#define greenlight 26 //for esp32
-#define redlight 27 //  for esp32
-
-
-int field = 2;// 1, 2, 3
 
 //////////////////////////////////
-float waterlevel = 0.0;
-float moisture = 0.0;
-float ph = 50.0;
-float rlevel = 0.0;
-float rph = 0.0;
-float rmoisture = 0.0;
 
-bool pump_on = false;
-//////////////////////////////////
+float temperature = 0.0;
+float humidity = 0.0;
+bool fan_on = false;
 
-
+/////////////////////////////////
 
 void updateValues();
 void handleData();
@@ -54,8 +45,6 @@ bool pumpstate();
 void setup() {
   Serial.begin(115200);
 
-  pinMode(greenlight, OUTPUT); digitalWrite(greenlight, HIGH); 
-  pinMode(redlight, OUTPUT); digitalWrite(redlight, HIGH); 
 
 
   tft.init();
@@ -70,11 +59,11 @@ void setup() {
   WiFi.begin(ssid, password);
   Serial.print("Connecting");
   while (WiFi.status() != WL_CONNECTED) {
-    tft.pushImage(0, 0, IMG_W, IMG_H, fieldleveloffline);// Draw background UI once
+    tft.pushImage(0, 0, IMG_W, IMG_H, greenoffline);// Draw background UI once
     delay(500);
     Serial.print(".");
   }
-  tft.pushImage(0, 0, IMG_W, IMG_H, fieldlevelonline);// Draw background UI once
+  tft.pushImage(0, 0, IMG_W, IMG_H, greenonline);// Draw background UI once
 
   Serial.println("\nConnected!");
   Serial.print("IP Address: http://");
@@ -88,22 +77,13 @@ void setup() {
 
 void loop() {
   if(WiFi.status() != WL_CONNECTED){
-    tft.pushImage(0, 0, IMG_W, IMG_H, fieldleveloffline);// Draw background UI once
+    tft.pushImage(0, 0, IMG_W, IMG_H, greenoffline);// Draw background UI once
     delay(500);
     return; // Skip the rest of the loop if not connected
   }
   server.handleClient();
   updateValues();
-  fieldupadete();
 
-  if(pump_on){
-    digitalWrite(greenlight, HIGH);
-    digitalWrite(redlight, LOW);
-  }
-  else{
-    digitalWrite(greenlight, LOW);
-    digitalWrite(redlight, HIGH);
-  }
 
 
   delay(1000);
@@ -121,7 +101,7 @@ void drawValue(int x, int y, const char* text, uint16_t color) {
       y + row,
       w,
       1,
-      &fieldlevelonline[(y + row) * IMG_W + x]
+      &greenonline[(y + row) * IMG_W + x]
     );
   }
 
@@ -141,17 +121,22 @@ void updateValues() {
   char buffer[20];
 
   // WATER LEVEL
-  sprintf(buffer, "%.1fcm", rlevel);
-  drawValue(75, 90, buffer, WATER_COLOR);
+  sprintf(buffer, "%.1f", temperature);
+  drawValue(75, 90, buffer, TFT_WHITE);
 
   // MOISTURE
-  sprintf(buffer, "%.1f%%", rmoisture);
-  drawValue(75, 160, buffer, TFT_GREEN);
+  sprintf(buffer, "%.1f%%", humidity);
+  drawValue(75, 160, buffer, TFT_WHITE);
 
   // PH
-  sprintf(buffer, "%.1f", rph);
-  drawValue(75, 230, buffer, TFT_WHITE);
-
+  if(fan_on){
+    sprintf(buffer, "ON");
+    drawValue(75, 230, buffer, TFT_WHITE);
+  }
+   else{
+     sprintf(buffer, "OFF");
+    drawValue(75, 230, buffer, TFT_WHITE);
+   }
 
 }
 
@@ -161,42 +146,30 @@ void handleData() {////////////////////////for field esp only///////////////////
 
   // LEVEL
   if (server.hasArg("level")) {
-    rlevel = server.arg("level").toInt();
+    temperature = server.arg("level").toInt();
     Serial.print("Level: ");
-    Serial.println(rlevel);
-    response += "Level OK | ";
+    Serial.println(temperature);
+    response += "Temperature OK | ";
   }
+  if (server.hasArg("humidity")) {
+    humidity = server.arg("humidity").toInt();
+    Serial.print("Humidity: ");
+    Serial.println(humidity);
+    response += "Humidity OK | ";
+  }
+  if (server.hasArg("fan")) {
+    String fan = server.arg("fan");
 
-  // PUMP
-  if (server.hasArg("pump")) {
-    String pump = server.arg("pump");
-
-    if (pump == "on") {
-      pump_on = true;
-      Serial.println("Pump ON");
-      response += "Pump ON | ";
+    if (fan == "on") {
+      fan_on = true;
+      Serial.println("Fan ON");
+      response += "Fan ON | ";
     } 
-    else if (pump == "off") {
-      pump_on = false;
-      Serial.println("Pump OFF");
-      response += "Pump OFF | ";
+    else if (fan == "off") {
+      fan_on = false;
+      Serial.println("Fan OFF");
+      response += "Fan OFF | ";
     }
-  }
-
-  // PH
-  if (server.hasArg("ph")) {
-    rph = server.arg("ph").toInt();
-    Serial.print("pH: ");
-    Serial.println(rph);
-    response += "pH OK | ";
-  }
-
-  // MOISTURE
-  if (server.hasArg("moisture")) {
-    rmoisture = server.arg("moisture").toInt();
-    Serial.print("Moisture: ");
-    Serial.println(rmoisture);
-    response += "Moisture OK | ";
   }
 
   // FINAL RESPONSE (ONLY ONCE)
@@ -207,28 +180,5 @@ void handleData() {////////////////////////for field esp only///////////////////
   }
 }
 
-bool pumpstate(){
-  if(server.hasArg("pump")){
-    String val = server.arg("pump");
-    if(val == "on"){
-      Serial.println("Pump ON");
-      server.send(200, "text/plain", "Pump turned ON");
-      return true;
-    }
-    else if(val == "off"){
-      Serial.println("Pump OFF");
-      server.send(200, "text/plain", "Pump turned OFF");
-      return false;
-    }
-  }
-}
 
-void fieldupadete(){
-  tft.setTextColor(TFT_WHITE);
-  tft.setTextSize(2.5);
-  tft.setCursor(100, 40);
-  tft.print((String)field);
-}
-void handleDatagreen(){
 
-}
