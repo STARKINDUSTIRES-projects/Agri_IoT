@@ -1,12 +1,24 @@
+/*
+#define TFT_MOSI 23
+#define TFT_SCLK 18
+#define TFT_CS   15  // Chip select control pin
+#define TFT_DC   25  // Data Command control pin
+#define TFT_RST   4  // Reset pin (could connect to RST pin)
+*/
+
+
 #include <TFT_eSPI.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Servo.h>
 
 #include "greenonline.h"// #include "fieldlevel.h" contains the pixel data for the background image (240x280px)
 #include "greenoffline.h"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite sprite = TFT_eSprite(&tft);
+
+Servo gate;
 
 
 const char* ssid = "Agri_IoT";//Agri_IoT
@@ -15,7 +27,7 @@ WebServer server(80);
 
 
 // 🔥 Static IP settings
-IPAddress local_IP(192, 168, 0, 20);   // choose free IP (192, 168, 0, ??)
+IPAddress local_IP(192, 168, 0, 7);   // choose free IP (192, 168, 0, ??) green house
 IPAddress gateway(192, 168, 0, 255);      // from ipconfig (192, 168, 0, 255)
 IPAddress subnet(255, 255, 255, 0); //(255, 255, 255, 0)
 
@@ -28,24 +40,49 @@ IPAddress subnet(255, 255, 255, 0); //(255, 255, 255, 0)
 #define MOIST_COLOR HEX565(0x019b03)// Dark Green (Soil Moisture)
 
 
+#define gatePin 27 //servo motor
+#define getesensor 34 // ir sensor pin
+#define firesensor 35 // fire sensor pin
+#define buzzer 33 // buzzer pin
+
+#define Fan 21// fanTrigger pin
+#define ldrTrigger 13 // ldrTrigger pin
+#define ldr 36 // ldr pin
+#define Thres 2000 //ldr threshold
+
 //////////////////////////////////
 
 float temperature = 0.0;
 float humidity = 0.0;
 bool fan_on = false;
+bool gateOpen = false;
+unsigned long gateStartTime = 0;
+int stableCount = 0;
+
+bool newdata = true;
+bool fire_on = false;
 
 /////////////////////////////////
 
 void updateValues();
 void handleData();
-void fieldupadete();
-bool pumpstate();
+void fire();
+void gateControl();
+void handlefire();
 
 
 void setup() {
   Serial.begin(115200);
 
+  gate.attach(gatePin); gate.write(0); // Attach servo to GPIO 27
+  pinMode(getesensor, INPUT);
+  pinMode(firesensor, INPUT_PULLUP);
+  pinMode(Fan,OUTPUT);
+  pinMode(ldrTrigger,OUTPUT);
+  pinMode(ldr,INPUT);
 
+  digitalWrite(ldrTrigger,HIGH);
+  digitalWrite(Fan,HIGH);
 
   tft.init();
   tft.setRotation(0);
@@ -68,25 +105,53 @@ void setup() {
   Serial.println("\nConnected!");
   Serial.print("IP Address: http://");
   Serial.print(WiFi.localIP());
-  Serial.println("/set?level=VALUE&pump=on|off");
+  Serial.println("/set?temp=10&humid=50&fan=on");
 
   server.on("/set", handleData);
+  server.on("/fire", handlefire);
   server.begin();
 
 }
 
+
+boolean lastWiFiState = false; // Track last WiFi state for change detection
+
 void loop() {
-  if(WiFi.status() != WL_CONNECTED){
-    tft.pushImage(0, 0, IMG_W, IMG_H, greenoffline);// Draw background UI once
-    delay(500);
-    return; // Skip the rest of the loop if not connected
+  bool currentWiFiState = (WiFi.status() == WL_CONNECTED);
+
+  // If WiFi just disconnected
+  if (!currentWiFiState && lastWiFiState == true) {
+    tft.pushImage(0, 0, IMG_W, IMG_H, greenoffline);
+    Serial.println("WiFi Lost");
   }
+
+  // If WiFi just connected
+  if (currentWiFiState && lastWiFiState == false) {
+    tft.pushImage(0, 0, IMG_W, IMG_H, greenonline);
+    Serial.println("WiFi Connected");
+  }
+
+  // Update last state
+  lastWiFiState = currentWiFiState;
   server.handleClient();
-  updateValues();
+  if(newdata){
+    updateValues();
+    newdata = false; // Reset flag after updating values
+  }
+  gateControl();
+  fire();
+  if(fire_on==true){ handlefire(); fire_on=false;}
+
+  int ldrVal = analogRead(ldr);
+  //Serial.println(ldrVal);
+  if(ldrVal < Thres){
+    digitalWrite(ldrTrigger,LOW);
+  }else{
+    digitalWrite(ldrTrigger,HIGH);
+  }
 
 
-
-  delay(1000);
+  delay(50);
 }
 
 void drawValue(int x, int y, const char* text, uint16_t color) {
@@ -120,46 +185,48 @@ void drawValue(int x, int y, const char* text, uint16_t color) {
 void updateValues() {
   char buffer[20];
 
-  // WATER LEVEL
+  // temperature
   sprintf(buffer, "%.1f", temperature);
-  drawValue(75, 90, buffer, TFT_WHITE);
+  drawValue(130, 75, buffer, TFT_WHITE); //horrizontal,height
 
-  // MOISTURE
+  // humidity
   sprintf(buffer, "%.1f%%", humidity);
-  drawValue(75, 160, buffer, TFT_WHITE);
+  drawValue(125, 150, buffer, TFT_WHITE);
 
-  // PH
+  // fan
   if(fan_on){
     sprintf(buffer, "ON");
-    drawValue(75, 230, buffer, TFT_WHITE);
+    drawValue(130, 225, buffer, TFT_WHITE);
+    digitalWrite(Fan,LOW);
   }
    else{
      sprintf(buffer, "OFF");
-    drawValue(75, 230, buffer, TFT_WHITE);
+    drawValue(130, 225, buffer, TFT_WHITE);
+    digitalWrite(Fan,HIGH);
    }
 
 }
 
-
 void handleData() {////////////////////////for field esp only////////////////////////////////////////////
   String response = "";
 
-  // LEVEL
-  if (server.hasArg("level")) {
-    temperature = server.arg("level").toInt();
-    Serial.print("Level: ");
+  // temperature
+  if (server.hasArg("temp")) {
+    temperature = server.arg("temp").toInt();
+    Serial.print("Temperature: ");
     Serial.println(temperature);
     response += "Temperature OK | ";
   }
-  if (server.hasArg("humidity")) {
-    humidity = server.arg("humidity").toInt();
+  //humidity
+  if (server.hasArg("humid")) {
+    humidity = server.arg("humid").toInt();
     Serial.print("Humidity: ");
     Serial.println(humidity);
     response += "Humidity OK | ";
   }
+  //fan
   if (server.hasArg("fan")) {
     String fan = server.arg("fan");
-
     if (fan == "on") {
       fan_on = true;
       Serial.println("Fan ON");
@@ -176,9 +243,56 @@ void handleData() {////////////////////////for field esp only///////////////////
   if (response == "") {
     server.send(400, "text/plain", "No valid parameters");
   } else {
+    newdata = true; // Flag to indicate new data received
     server.send(200, "text/plain", response);
   }
 }
 
+void fire(){
+  // Serr));ial.println(analogRead(
+  int val = digitalRead(firesensor);
 
+  if (val == LOW) {
+    stableCount++;
+  } else {
+    stableCount = 0;
+  }
 
+  if (stableCount >= 10) {
+    Serial.println("Fire Detected!");
+    digitalWrite(buzzer, HIGH); // Activate buzzer
+    fire_on = true;
+    delay(500); // Keep buzzer on for 1 second
+    digitalWrite(buzzer, LOW); // Deactivate buzzer
+  }
+  else{
+    fire_on=false;
+  }
+}
+
+void gateControl(){
+ if (digitalRead(getesensor) == LOW && !gateOpen) {
+    Serial.println("Gate Opened!");
+
+    gate.write(90);           // Open gate
+    gateOpen = true;
+    gateStartTime = millis(); // Start timer
+  }
+
+  // Check if 3 seconds passed
+  if (gateOpen && millis() - gateStartTime >= 3000) {
+    Serial.println("Gate Closed!");
+
+    gate.write(0);  // Close gate
+    gateOpen = false;
+  }
+}
+
+void handlefire(){
+  if(fire_on){
+     server.send(200, "text/plain", "Fire Detected");
+  }
+  else{
+    server.send(200, "text/plain", "No Fire Detected");
+  }
+}

@@ -9,14 +9,13 @@
 
 
 #include <TFT_eSPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include <WiFi.h>
 #include <WebServer.h>
 
-
 #include "fieldlevelonline.h"// #include "fieldlevel.h" contains the pixel data for the background image (240x280px)
 #include "fieldleveloffline.h"
-#include "irrigation.h"
-#include "drain.h"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite sprite = TFT_eSprite(&tft);
@@ -27,11 +26,9 @@ const char* password = "Agri@123";//Agri@123
 WebServer server(80);
 
 // 🔥 Static IP settings
-IPAddress local_IP(192, 168, 0, 3);   // choose free IP (192, 168, 0, ??) field 5 and 6
+IPAddress local_IP(192, 168, 0, 4);   // choose free IP (192, 168, 0, ??)
 IPAddress gateway(192, 168, 0, 255);      // from ipconfig (192, 168, 0, 255)
 IPAddress subnet(255, 255, 255, 0); //(255, 255, 255, 0)
-
-
 
 
 #define IMG_W 240// Image width in pixels
@@ -45,16 +42,21 @@ IPAddress subnet(255, 255, 255, 0); //(255, 255, 255, 0)
 #define SCREEN_ADDRESS 0x3C 
 ////////////////////////////////////////////////////////////////////////////////////
 
+
 #define HEX565(c) tft.color565((c>>16)&0xFF, (c>>8)&0xFF, c&0xFF)// Convert 24-bit RGB color to 16-bit RGB565 format
 #define WATER_COLOR HEX565(0x5BC0EB)// Light Blue (Water)
 #define MOIST_COLOR HEX565(0x019b03)// Dark Green (Soil Moisture)
 
-#define greenlight 27 //for esp32
-#define redlight 26 //  for esp32
+#define greenlight 26 //for esp32
+#define redlight 27 //  for esp32
+#define watersensor 33 // water level sensor pin
+
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 
 
-int field = 3;// 1, 2, 3
+int field = 1;// 1, 2, 3
 
 //////////////////////////////////
 float waterlevel = 0.0;
@@ -63,29 +65,44 @@ float ph = 50.0;
 float rlevel = 0.0;
 float rph = 0.0;
 float rmoisture = 0.0;
-String state = "";
-
-
-bool newdata = true;
+int maintanklevel = 0;
+int lastSentTankLevel = 0;
 
 bool pump_on = false;
+bool newdata = true;
+bool levelchagne = true;
 //////////////////////////////////
 
 
 
+
+void sensorread();
 void updateValues();
 void handleData();
 void fieldupadete();
 bool pumpstate();
-
+void oled(int maintanklevel);
+void handleTankLevel();
 
 void setup() {
   Serial.begin(115200);
 
 
 
+  ////////////////////////////////////oled//////////////////////////////////////////////
+  Wire.begin(21, 22);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println("OLED not found");
+    while (true);
+  }
+ /////////////////////////////////////////////////////////////////////////////////////
+
+
+
   pinMode(greenlight, OUTPUT); digitalWrite(greenlight, HIGH); 
   pinMode(redlight, OUTPUT); digitalWrite(redlight, HIGH); 
+  pinMode(watersensor, INPUT);
 
 
   tft.init();
@@ -112,10 +129,10 @@ void setup() {
   Serial.println("/set?level=VALUE&pump=on|off");
 
   server.on("/set", handleData);
+  server.on("/tank", handleTankLevel);
   server.begin();
 
 }
-
 
 boolean lastWiFiState = false; // Track last WiFi state for change detection
 void loop() {
@@ -136,13 +153,18 @@ void loop() {
   // Update last state
   lastWiFiState = currentWiFiState;
 
-  // Your normal loop code here
   server.handleClient();
   if(newdata){
     updateValues();
     newdata = false; // Reset flag after updating values
   }
   fieldupadete();
+  sensorread();
+
+  if(levelchagne){
+    handleTankLevel();
+    levelchagne = false;
+  }
 
   if(pump_on){
     digitalWrite(greenlight, HIGH);
@@ -152,7 +174,6 @@ void loop() {
     digitalWrite(greenlight, LOW);
     digitalWrite(redlight, HIGH);
   }
-
 
   delay(50);
 }
@@ -203,7 +224,6 @@ void updateValues() {
 
 }
 
-
 void handleData() {////////////////////////for field esp only////////////////////////////////////////////
   String response = "";
 
@@ -246,13 +266,6 @@ void handleData() {////////////////////////for field esp only///////////////////
     Serial.println(rmoisture);
     response += "Moisture OK | ";
   }
-  //status
-  if(server.hasArg("status")){
-    state= server.arg("status");
-    Serial.print("status: ");
-    Serial.println(state);
-    response += "status OK | ";
-  }
 
   // FINAL RESPONSE (ONLY ONCE)
   if (response == "") {
@@ -286,13 +299,27 @@ void fieldupadete(){
   tft.print((String)field);
 }
 
-void statusscreen(String status){
-  if(status == "drain"){
-    tft.pushImage(0, 0, IMG_W, IMG_H, drain);
+void sensorread(){
+    float value  = analogRead(watersensor);
+    if(value < 1300) value = 1300; // Cap the value to avoid outliers
+    maintanklevel = map(value, 1300, 4095, 0, 100); // Map the raw sensor value to a percentage (0-100%)
+    oled(maintanklevel);
+    if (abs(maintanklevel - lastSentTankLevel) >= 5)  {lastSentTankLevel = maintanklevel;  levelchagne = true;  }
+
   }
-  else if(status == "irrigation"){
-    tft.pushImage(0, 0, IMG_W, IMG_H, irrigation);
-  }
+
+void oled(int maintanklevel){
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  if(maintanklevel >= 100) maintanklevel = 128; 
+  Serial.print(" ");
+  Serial.println(maintanklevel);
+  display.fillRect(0, 0, maintanklevel, 20, SSD1306_WHITE);  
+  display.display();
 }
 
+void handleTankLevel() {
+  String reading = String(maintanklevel);
+  server.send(200, "text/plain", reading);
+}
 
