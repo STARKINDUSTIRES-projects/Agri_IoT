@@ -129,6 +129,7 @@ void loop() {
   if (currentWiFiState && lastWiFiState == false) {
     tft.pushImage(0, 0, IMG_W, IMG_H, greenonline);
     Serial.println("WiFi Connected");
+    updateValues(); // Update display immediately on reconnect
   }
 
   // Update last state

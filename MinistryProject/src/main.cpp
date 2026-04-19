@@ -77,6 +77,7 @@ void updateValues();
 void handleData();
 void fieldupadete();
 bool pumpstate();
+void statusscreen(String status);
 
 
 void setup() {
@@ -118,6 +119,7 @@ void setup() {
 
 
 boolean lastWiFiState = false; // Track last WiFi state for change detection
+String lastStatus = state; // Track last status for change detection
 void loop() {
   bool currentWiFiState = (WiFi.status() == WL_CONNECTED);
 
@@ -140,6 +142,11 @@ void loop() {
   server.handleClient();
   if(newdata){
     updateValues();
+    if(state != lastStatus){
+      statusscreen(state);
+      lastStatus = state; // Update last status after changing screen
+    }
+    statusscreen(state);
     newdata = false; // Reset flag after updating values
   }
   fieldupadete();
@@ -201,6 +208,7 @@ void updateValues() {
   drawValue(75, 230, buffer, TFT_WHITE);
 
 
+
 }
 
 
@@ -248,7 +256,11 @@ void handleData() {////////////////////////for field esp only///////////////////
   }
   //status
   if(server.hasArg("status")){
-    state= server.arg("status");
+    String STATUS= server.arg("status");
+
+    if (STATUS != "") {          // only update if not empty
+    state = STATUS;           // ✅ IMPORTANT
+    }
     Serial.print("status: ");
     Serial.println(state);
     response += "status OK | ";
@@ -288,10 +300,14 @@ void fieldupadete(){
 
 void statusscreen(String status){
   if(status == "drain"){
+    tft.fillScreen(TFT_BLACK); // Clear screen before drawing new image
     tft.pushImage(0, 0, IMG_W, IMG_H, drain);
+    delay(5000);
   }
   else if(status == "irrigation"){
+    tft.fillScreen(TFT_BLACK); // Clear screen before drawing new image
     tft.pushImage(0, 0, IMG_W, IMG_H, irrigation);
+    delay(5000);
   }
 }
 
